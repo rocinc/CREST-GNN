@@ -10,8 +10,10 @@ import torch
 
 sys.stdout.reconfigure(line_buffering=True)
 _this_dir = os.path.dirname(os.path.abspath(__file__))
-if _this_dir not in sys.path:
-    sys.path.insert(0, _this_dir)
+_repo_root = os.path.dirname(_this_dir)
+for _p in (_repo_root, _this_dir):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 import optuna
 optuna.logging.set_verbosity(optuna.logging.WARNING)
@@ -19,13 +21,13 @@ optuna.logging.set_verbosity(optuna.logging.WARNING)
 from shared.data import load_dataset, MULTI_SPLIT_DATASETS
 from shared.propagation import (compute_lambda_signal, select_aggregation_filter,
                                  compute_depth_from_gap)
-from train import (
+from shared.train import (
     GCN, GCN_HP, train_gcn, C0,
     _PLATONOV_DATASETS, _OGB_DATASETS, _PLANETOID_FIXED_DATASETS, _random_masks,
 )
 
-EPOCHS_HPO   = 300
-N_SPLITS_HPO = 3
+EPOCHS_HPO   = 200
+N_SPLITS_HPO = 2
 DEVICE       = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -46,11 +48,6 @@ def _objective(trial: optuna.Trial, dsname: str, data_root: str,
     n, in_dim = x0.size(0), x0.size(1)
     n_classes = int(y0.max().item()) + 1
 
-    lam   = compute_lambda_signal(ei0, y0, n, node_mask=None)
-    h_phi = select_aggregation_filter(lam)
-    lam_eff = (1.0 - lam / 2.0) if h_phi == 'hp' else lam
-    k_star = compute_depth_from_gap(lam_eff, C0)
-
     if dsname.lower() in MULTI_SPLIT_DATASETS:
         from shared.data import load_dataset_all_splits
         splits = load_dataset_all_splits(dsname, data_root)[:N_SPLITS_HPO]
@@ -65,18 +62,22 @@ def _objective(trial: optuna.Trial, dsname: str, data_root: str,
                   for i in range(N_SPLITS_HPO)]
 
     hp_cache = None
-    if h_phi == 'hp':
-        _tmp = GCN_HP(1, 1, 1, 1).to(DEVICE)
-        _tmp.cache_graph(ei0.to(DEVICE), n)
-        hp_cache = (_tmp._row, _tmp._col, _tmp._norm, _tmp._n)
-        del _tmp
-
     val_accs = []
     for x, ei, y, tm, vm, te in splits:
+        lam = compute_lambda_signal(ei, y, n, node_mask=tm, estimator="hajek")
+        h_phi = select_aggregation_filter(lam)
+        lam_eff = (1.0 - lam / 2.0) if h_phi == 'hp' else lam
+        k_star = compute_depth_from_gap(lam_eff, C0)
+
         x  = x.to(DEVICE);  ei = ei.to(DEVICE)
         y  = y.to(DEVICE);  tm = tm.to(DEVICE);  vm = vm.to(DEVICE)
 
         if h_phi == 'hp':
+            if hp_cache is None:
+                _tmp = GCN_HP(1, 1, 1, 1).to(DEVICE)
+                _tmp.cache_graph(ei, n)
+                hp_cache = (_tmp._row, _tmp._col, _tmp._norm, _tmp._n)
+                del _tmp
             model = GCN_HP(in_dim, params["hidden"], n_classes, k_star,
                            dropout=params["dropout"]).to(DEVICE)
             model._row, model._col, model._norm, model._n = hp_cache
@@ -92,10 +93,7 @@ def _objective(trial: optuna.Trial, dsname: str, data_root: str,
 
 
 def _hpo_n_jobs(dsname: str) -> int:
-    _HUGE  = {"ogbn-arxiv"}
-    _LARGE = {"roman-empire", "amazon-ratings", "cs", "pubmed", "dblp"}
-    if dsname.lower() in _HUGE:
-        return 1
+    _LARGE = {"roman-empire", "cs", "pubmed", "dblp"}
     if dsname.lower() in _LARGE:
         return 2
     return 4
@@ -136,7 +134,7 @@ def main():
         "squirrel-filtered", "roman-empire",
     ])
     parser.add_argument("--data_root",   default=os.environ.get("PYG_DATA_ROOT", "data"))
-    parser.add_argument("--n_trials",    type=int,   default=100)
+    parser.add_argument("--n_trials",    type=int,   default=30)
     parser.add_argument("--train_ratio", type=float, default=0.60)
     parser.add_argument("--val_ratio",   type=float, default=0.20)
     parser.add_argument("--out_dir",     default="results/hpo")

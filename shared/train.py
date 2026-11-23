@@ -31,9 +31,9 @@ C0 = 0.25
 DEFAULT_PARAMS = {"hidden": 128, "lr": 0.01, "dropout": 0.5, "wd": 5e-4}
 
 _PLATONOV_DATASETS = frozenset({
-    "roman-empire", "amazon-ratings", "minesweeper", "tolokers", "questions"
+    "roman-empire", "minesweeper", "tolokers", "questions"
 })
-_OGB_DATASETS = frozenset({"ogbn-arxiv", "ogbn-products"})
+_OGB_DATASETS = frozenset({"ogbn-products"})
 _PLANETOID_FIXED_DATASETS: frozenset = frozenset()
 
 
@@ -169,13 +169,7 @@ def run_dataset(dsname: str, args, hpo_params: dict) -> dict:
         print(f"  Using defaults: {params}", flush=True)
 
     x0, ei0, y0, tm0, vm0, te0 = load_dataset(dsname, args.data_root, split_idx=0)
-
     n = x0.size(0)
-    lam = compute_lambda_signal(ei0, y0, n, node_mask=None)  # full labels measure label-topology alignment across the full graph, a dataset-level structural property
-    h_phi = select_aggregation_filter(lam)
-    lam_eff = (1.0 - lam / 2.0) if h_phi == 'hp' else lam
-    k_star = compute_depth_from_gap(lam_eff, C0)
-    print(f"  n={n}  λ={lam:.3f}  filter={h_phi}  K*={k_star}", flush=True)
 
     if dsname.lower() in MULTI_SPLIT_DATASETS:
         splits = load_dataset_all_splits(dsname, args.data_root)
@@ -197,8 +191,17 @@ def run_dataset(dsname: str, args, hpo_params: dict) -> dict:
     wd        = params["wd"]
     device    = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    # Compute per-split Hajek prescriptions strictly from each split's train_mask
+    split_prescriptions = []
+    for _, ei_s, y_s, tm_s, _, _ in splits:
+        lam_s = compute_lambda_signal(ei_s, y_s, n, node_mask=tm_s, estimator="hajek")
+        h_phi_s = select_aggregation_filter(lam_s)
+        lam_eff_s = (1.0 - lam_s / 2.0) if h_phi_s == 'hp' else lam_s
+        k_star_s = compute_depth_from_gap(lam_eff_s, C0)
+        split_prescriptions.append((lam_s, h_phi_s, k_star_s))
+
     hp_cache = None
-    if h_phi == 'hp':
+    if any(hp == 'hp' for _, hp, _ in split_prescriptions):
         _tmp = GCN_HP(1, 1, 1, 1).to(device)
         _tmp.cache_graph(ei0.to(device), n)
         hp_cache = (_tmp._row, _tmp._col, _tmp._norm, _tmp._n)
@@ -209,22 +212,23 @@ def run_dataset(dsname: str, args, hpo_params: dict) -> dict:
 
     def _run_split(i_s):
         i, (x, ei, y, tm, vm, te) = i_s
-        if h_phi == 'hp':
-            model = GCN_HP(in_dim, hidden, n_classes, k_star, dropout=dropout).to(device)
+        lam_s, h_phi_s, k_star_s = split_prescriptions[i]
+        if h_phi_s == 'hp':
+            model = GCN_HP(in_dim, hidden, n_classes, k_star_s, dropout=dropout).to(device)
             model._row, model._col, model._norm, model._n = hp_cache
         else:
-            model = GCN(in_dim, hidden, n_classes, k_star, dropout=dropout).to(device)
+            model = GCN(in_dim, hidden, n_classes, k_star_s, dropout=dropout).to(device)
         val_acc = train_gcn(model, x, ei, y, tm, vm,
                             epochs=args.epochs, lr=lr, wd=wd)
         model.eval()
         with torch.no_grad():
             test_acc = (model(x, ei)[te].argmax(1) == y[te]).float().mean().item()
-        print(f"  split {i+1}/{len(splits)} val={val_acc:.4f} test={test_acc:.4f}", flush=True)
-        return i, {"val_acc": val_acc, "test_acc": test_acc}
+        print(f"  split {i+1}/{len(splits)} lam={lam_s:.3f} filter={h_phi_s} K*={k_star_s} val={val_acc:.4f} test={test_acc:.4f}", flush=True)
+        return i, {"val_acc": val_acc, "test_acc": test_acc, "lambda_signal": lam_s, "h_phi": h_phi_s, "k_star": k_star_s}
 
     from concurrent.futures import ThreadPoolExecutor
-    _HUGE  = {"ogbn-arxiv"}
-    _LARGE = {"roman-empire", "amazon-ratings", "cs", "pubmed", "dblp"}
+    _HUGE  = set()
+    _LARGE = {"roman-empire", "cs", "pubmed", "dblp"}
     if dsname.lower() in _HUGE:
         n_parallel = 1
     elif dsname.lower() in _LARGE:
@@ -238,20 +242,26 @@ def run_dataset(dsname: str, args, hpo_params: dict) -> dict:
             split_results[i] = r
 
     test_accs = [r["test_acc"] for r in split_results]
+    lam_vals = [r["lambda_signal"] for r in split_results]
+    h_phi_vals = [r["h_phi"] for r in split_results]
+    k_star_vals = [r["k_star"] for r in split_results]
     out = {
-        "dataset":      dsname,
-        "n_splits":     len(split_results),
-        "lambda_signal": lam,
-        "h_phi":        h_phi,
-        "k_star":       k_star,
-        "test_acc_mean": float(np.mean(test_accs)),
-        "test_acc_std":  float(np.std(test_accs)),
-        "params":       params,
-        "elapsed_s":    time.time() - t0,
+        "dataset":        dsname,
+        "n_splits":       len(split_results),
+        "lambda_mean":    float(np.mean(lam_vals)),
+        "lambda_std":     float(np.std(lam_vals)),
+        "h_phi":          max(set(h_phi_vals), key=h_phi_vals.count),
+        "k_star":         max(set(k_star_vals), key=k_star_vals.count),
+        "h_phi_per_split": h_phi_vals,
+        "k_star_per_split": k_star_vals,
+        "test_acc_mean":  float(np.mean(test_accs)),
+        "test_acc_std":   float(np.std(test_accs)),
+        "params":         params,
+        "elapsed_s":      time.time() - t0,
     }
     with open(result_path, "w") as f:
         json.dump(out, f, indent=2)
-    print(f"  FINAL {dsname}: {out['test_acc_mean']:.4f}±{out['test_acc_std']:.4f}  K*={k_star}  filter={h_phi}", flush=True)
+    print(f"  FINAL {dsname}: {out['test_acc_mean']:.4f}±{out['test_acc_std']:.4f}  K*={out['k_star']}  filter={out['h_phi']}", flush=True)
     return out
 
 

@@ -18,9 +18,11 @@ from queue import Empty, Queue
 
 sys.stdout.reconfigure(line_buffering=True)
 
-PY   = os.environ.get("CREST_PYTHON", sys.executable)
-EXP  = os.path.dirname(os.path.abspath(__file__))
-LOGS = os.path.join(EXP, "logs")
+PY     = os.environ.get("CREST_PYTHON", sys.executable)
+EXP    = os.path.dirname(os.path.abspath(__file__))
+ROOT   = os.path.dirname(EXP)
+SHARED = os.path.join(ROOT, "shared")
+LOGS   = os.path.join(EXP, "logs")
 
 
 DATASETS_ORDERED = [
@@ -36,24 +38,25 @@ DATASETS_ORDERED = [
 
 
 def run_dataset(ds: str, gpu: int, data_root: str, dry_run: bool, version: str, n_trials: int) -> int:
-    hpo_out   = f"{EXP}/results/hpo_{version}_{ds.replace('-', '_')}"
-    train_out = f"{EXP}/results/training_{version}"
-    log_path  = f"{LOGS}/{version}_{ds.replace('-', '_')}.log"
+    hpo_out   = os.path.join(EXP, "results", f"hpo_{version}_{ds.replace('-', '_')}")
+    train_out = os.path.join(EXP, "results", f"training_{version}")
+    log_path  = os.path.join(LOGS, f"{version}_{ds.replace('-', '_')}.log")
 
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = str(gpu)
+    env["PYTHONPATH"] = ROOT + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
 
     hpo_cmd = [
-        PY, f"{EXP}/hpo.py",
+        PY, os.path.join(SHARED, "hpo.py"),
         "--datasets", ds,
         "--n_trials", str(n_trials),
         "--data_root", data_root,
         "--out_dir", hpo_out,
     ]
     train_cmd = [
-        PY, f"{EXP}/train.py",
+        PY, os.path.join(SHARED, "train.py"),
         "--datasets", ds,
-        "--hpo_params", f"{hpo_out}/all_best_params.json",
+        "--hpo_params", os.path.join(hpo_out, "all_best_params.json"),
         "--data_root", data_root,
         "--out_dir", train_out,
     ]
@@ -97,7 +100,7 @@ def main() -> None:
     parser.add_argument("--n_gpus",   type=int, default=1)
     parser.add_argument("--dry_run",  action="store_true")
     parser.add_argument("--version",  default="v1")
-    parser.add_argument("--n_trials", type=int, default=100)
+    parser.add_argument("--n_trials", type=int, default=30)
     args = parser.parse_args()
 
     queue: Queue = Queue()

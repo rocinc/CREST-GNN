@@ -1,12 +1,12 @@
 # CREST: Criterion for Representation Extremum via Spectral Threshold
 
-A single spectral scalar, the task-effective spectral gap, determines the optimal GNN depth, selects between low-pass and high-pass filters, and predicts how a nonlinear activation shortens the depth. All three quantities follow from one sparse matrix–vector product evaluated before training. On eight benchmarks a GCN at the prescribed depth leads on five, and on the strongly heterophilic Roman-Empire the analytical filter switch gains 22.5 points over AD-GNN.
+A single spectral scalar, the task-effective spectral gap $\lambda_{\mathrm{signal}}$, fixes GNN propagation depth, selects between low-pass and high-pass filters at the universal crossover $\lambda_{\mathrm{signal}} = 2/3$, and quantifies ReLU depth contraction before training. Estimated in linear time from training labels alone via a self-normalized Hájek estimator, CREST replaces multi-depth search with a pre-training spectral gate.
 
 ---
 
 ## Requirements
 
-Python 3.10+. Tested on NVIDIA RTX 3090 (24 GB), CUDA 12.4.
+Python 3.10+. Tested on NVIDIA Tesla T4 (16 GB) and RTX 3090 (24 GB), CUDA 12.4.
 
 PyTorch and PyG require CUDA-matched wheels. Install in this order:
 
@@ -32,18 +32,19 @@ pip install -r requirements.txt
 
 ## Datasets
 
-All eight datasets download automatically through PyG on first run. Set the data root via `--data_root` or the environment variable `PYG_DATA_ROOT`.
+Primary and auxiliary benchmarks download automatically through PyG on first run (except Squirrel-filtered). Set the data root via `--data_root` or the environment variable `PYG_DATA_ROOT`.
 
 | Dataset | Source | Splits |
 |---|---|---|
-| Cora-ML, DBLP | `CitationFull` (PyG) | 10× random 60/20/20 |
-| Citeseer, Pubmed | `Planetoid` (PyG) | 10× random 60/20/20 |
-| Amazon-Photo | `Amazon` (PyG) | 10× random 60/20/20 |
-| Coauthor-CS | `Coauthor` (PyG) | 10× random 60/20/20 |
+| Cora-ML, DBLP | `CitationFull` (PyG) | 10× deterministic 60/20/20 |
+| Citeseer, Pubmed | `Planetoid` (PyG) | 10× deterministic 60/20/20 |
+| Amazon-Photo | `Amazon` (PyG) | 10× deterministic 60/20/20 |
+| Coauthor-CS | `Coauthor` (PyG) | 10× deterministic 60/20/20 |
 | Squirrel-filtered | Platonov et al. (2023) `.npz` | 10 fixed splits |
 | Roman-Empire | `HeterophilousGraphDataset` (PyG) | 10 fixed splits |
+| Film, Wisconsin | `Actor` / `WebKB` (PyG) | 10 fixed Geom-GCN splits |
 
-Squirrel-filtered expects `.npz` files under `<data_root>/platonov_filtered/`. Download from [Platonov's repository](https://github.com/yandex-research/heterophilous-graphs) and place them there.
+Squirrel-filtered expects `squirrel_filtered.npz` under `<data_root>/platonov_filtered/`. Download from [Platonov's repository](https://github.com/yandex-research/heterophilous-graphs) and place it there.
 
 ---
 
@@ -51,50 +52,50 @@ Squirrel-filtered expects `.npz` files under `<data_root>/platonov_filtered/`. D
 
 ### Quick start: full benchmark
 
-The coordinator `experiments/run.py` queues all eight datasets across available GPUs:
+The coordinator `experiments/run.py` schedules all eight primary datasets across available GPUs:
 
 ```bash
 python experiments/run.py --data_root data --n_gpus 1
 ```
 
-This runs HPO (100 Optuna trials per dataset) followed by training (10 splits, 500 epochs each). Results write to `experiments/results/`. Add `--dry_run` to preview the schedule without executing.
+This runs Optuna HPO (30 trials, 2 validation splits, 200 epochs) followed by 10-split evaluation (500 epochs each), computing the training-only Hájek spectral gap inside each split before any parameter is optimized. Results write to `experiments/results/`. Add `--dry_run` to preview the schedule without executing.
 
 ### Step by step
 
-**1. Hyperparameter search** — depth and filter are fixed analytically; HPO tunes hidden width, learning rate, dropout, and weight decay:
+**1. Hyperparameter search** (depth and filter are fixed analytically per split; HPO tunes hidden width, learning rate, dropout, and weight decay):
 
 ```bash
 python shared/hpo.py --datasets cora_ml citeseer pubmed dblp photo cs squirrel-filtered roman-empire \
-    --data_root data --n_trials 100 --out_dir results/hpo
+    --data_root data --n_trials 30 --out_dir results/hpo
 ```
 
-**2. Training** — load HPO params, train 10 splits per dataset, report mean ± std:
+**2. Training** (load HPO params, evaluate 10 splits per dataset, report mean ± std):
 
 ```bash
 python shared/train.py --datasets cora_ml citeseer pubmed dblp photo cs squirrel-filtered roman-empire \
     --data_root data --hpo_params results/hpo/all_best_params.json --out_dir results/training
 ```
 
-Each dataset prints its prescribed depth, filter, and per-split accuracy as it runs.
+Each dataset prints its per-split training-only spectral gap, filter polarity, retained depth `K*`, and accuracy.
 
 ---
 
 ## Results
 
-Test accuracy (%) on eight datasets, mean ± std over 10 splits.
+Unified benchmark test accuracy (%, mean ± std over 10 splits) under the matched 30-trial Optuna protocol. Bold marks the best depth-selection method per row (CREST versus AD-GNN and BEC-GNN).
 
-| Dataset | λ | Filter | K* | CREST | AD-GNN | BNA-GNN | BEC-GNN |
+| Dataset | $\hat{\lambda}_{\mathrm{sig}}$ | $(h_\phi, K^*)$ | CREST (Hájek) | AD-GNN | BEC-GNN | GCN-Grid | ACM-GCN |
 |---|---|---|---|---|---|---|---|
-| Cora-ML | 0.255 | LP | 3 | **88.65 ± 1.01** | 87.32 ± 1.03 | 87.78 ± 1.03 | 54.25 ± 9.75 |
-| Citeseer | 0.261 | LP | 3 | 76.52 ± 1.53 | **79.14 ± 0.92** | 75.24 ± 1.20 | 75.68 ± 2.08 |
-| Pubmed | 0.329 | LP | 2 | **89.04 ± 0.36** | 88.39 ± 0.51 | 88.02 ± 0.57 | — |
-| DBLP | 0.277 | LP | 3 | **86.06 ± 0.39** | 84.14 ± 0.68 | 85.43 ± 0.41 | — |
-| Photo | 0.281 | LP | 3 | 93.73 ± 0.53 | **94.10 ± 0.55** | 93.30 ± 1.15 | 87.80 ± 3.18 |
-| CS | 0.235 | LP | 3 | 92.91 ± 0.53 | **94.76 ± 0.29** | 93.83 ± 0.47 | — |
-| Squirrel-filt. | 0.861 | HP | 1 | **41.38 ± 2.23** | 40.19 ± 1.08 | 39.35 ± 1.79 | 31.63 ± 21.14 |
-| Roman-Empire | 0.742 | HP | 1 | **69.35 ± 0.47** | 46.86 ± 1.21 | 58.16 ± 1.92 | — |
-
-λ is the task-effective spectral gap of the low-pass operator. K* is the depth the closed-form prescription assigns. Bold marks the highest mean per row.
+| Cora-ML | 0.256 | (LP, 3) | **88.98 ± 0.98** | 87.70 ± 1.00 | 87.76 ± 1.02 | 88.31 ± 1.08 | 88.90 ± 0.84 |
+| Citeseer | 0.261 | (LP, 3) | 76.10 ± 1.03 | **76.46 ± 1.46** | 76.05 ± 0.97 | 77.10 ± 1.17 | 76.23 ± 1.31 |
+| Pubmed | 0.328 | (LP, 2) | **89.01 ± 0.37** | 88.55 ± 0.33 | OOM | 88.94 ± 0.53 | 90.29 ± 0.28 |
+| DBLP | 0.279 | (LP, 3) | **86.00 ± 0.34** | 84.35 ± 0.40 | OOM | 86.02 ± 0.35 | 85.73 ± 0.33 |
+| Photo | 0.283 | (LP, 3) | 93.61 ± 0.68 | **94.22 ± 0.55** | 93.33 ± 0.50 | 94.41 ± 0.42 | 95.42 ± 0.26 |
+| CS | 0.235 | (LP, 3) | 92.84 ± 0.55 | **94.18 ± 0.27** | OOM | 94.16 ± 0.29 | 95.22 ± 0.30 |
+| Squirrel-filt. | 0.861 | (HP, 1) | 40.77 ± 1.91 | **41.35 ± 2.82** | 40.16 ± 2.10 | 41.92 ± 1.80 | 35.66 ± 0.84 |
+| Roman-Empire | 0.742 | (HP, 1) | **67.69 ± 0.33** | 53.52 ± 0.35 | OOM | 53.51 ± 0.44 | 84.56 ± 0.56 |
+| Film | 0.752 | (HP, 1) | **33.68 ± 1.11** | 29.43 ± 1.25 | — | — | 35.51 ± 1.10 |
+| Wisconsin | 0.779 | (HP, 1) | **79.22 ± 3.84** | 49.41 ± 5.93 | — | — | 85.49 ± 3.84 |
 
 ---
 
@@ -111,12 +112,12 @@ crest_release/
 └── shared/
     ├── __init__.py
     ├── csbm.py             # CSBM graph generator (Assumption 1)
-    ├── data.py             # PyG dataset loading for all benchmarks
-    ├── fisher.py           # Fisher information, linear probe, TrFW curves
-    ├── hpo.py              # Optuna HPO (depth/filter fixed, tunes hidden/lr/dropout/wd)
-    ├── kstar.py            # K* computation: theory, empirical, IG-peak
-    ├── propagation.py      # Spectral gap, filter selection, depth formula
-    └── train.py            # GCN/GCN-HP training with prescribed depth
+    ├── data.py             # PyG dataset loading utilities
+    ├── fisher.py           # Posterior Fisher information and linear probe utilities
+    ├── hpo.py              # Optuna HPO (depth/filter fixed per split, tunes hidden/lr/dropout/wd)
+    ├── kstar.py            # Analytical and empirical depth computation utilities
+    ├── propagation.py      # Spectral gap, training-only Hajek/HT estimators, filter & depth rules
+    └── train.py            # GCN / GCN-HP training with per-split CREST configuration
 ```
 
 ---

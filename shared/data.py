@@ -19,13 +19,11 @@ _DATASET_REGISTRY = {
     "squirrel": ("WikipediaNetwork", {"name": "squirrel", "geom_gcn_preprocess": True}),
     "chameleon": ("WikipediaNetwork", {"name": "chameleon", "geom_gcn_preprocess": True}),
     "squirrel-filtered": ("_platonov_npz", {"stem": "squirrel_filtered"}),
-    "chameleon-filtered": ("_platonov_npz", {"stem": "chameleon_filtered"}),
     "texas": ("WebKB", {"name": "Texas"}),
     "cornell": ("WebKB", {"name": "Cornell"}),
     "wisconsin": ("WebKB", {"name": "Wisconsin"}),
     "film": ("Actor", {"_subdir": "actor"}),
     "roman-empire": ("HeterophilousGraphDataset", {"name": "Roman-empire"}),
-    "amazon-ratings": ("HeterophilousGraphDataset", {"name": "Amazon-ratings"}),
     "minesweeper": ("HeterophilousGraphDataset", {"name": "Minesweeper"}),
     "tolokers": ("HeterophilousGraphDataset", {"name": "Tolokers"}),
     "questions": ("HeterophilousGraphDataset", {"name": "Questions"}),
@@ -33,7 +31,6 @@ _DATASET_REGISTRY = {
     "dblp": ("CitationFull", {"name": "DBLP"}),
     "flickr": ("Flickr", {"_subdir": "Flickr"}),
     "reddit": ("Reddit", {"_subdir": "Reddit"}),
-    "ogbn-arxiv": ("_ogbn", {"name": "ogbn-arxiv"}),
     "ogbn-products": ("_ogbn", {"name": "ogbn-products"}),
 }
 
@@ -85,7 +82,7 @@ def _load_platonov_npz(
     stem: str,
     split_idx: int,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Load Platonov 2023 squirrel-filtered / chameleon-filtered from .npz."""
+    """Load Platonov 2023 squirrel-filtered from .npz."""
     import numpy as np
 
     path = root / "platonov_filtered" / f"{stem}.npz"
@@ -248,7 +245,7 @@ def load_dataset_all_splits(
 
 MULTI_SPLIT_DATASETS = {
     "texas", "cornell", "wisconsin",
-    "squirrel-filtered", "chameleon-filtered",
+    "squirrel-filtered",
 }
 
 
