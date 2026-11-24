@@ -50,7 +50,9 @@ Squirrel-filtered expects `squirrel_filtered.npz` under `<data_root>/platonov_fi
 
 ## Usage
 
-### Quick start: full benchmark
+This repository provides the core CREST pre-training spectral estimator, depth/filter prescription, Optuna HPO, and GCN / GCN-HP training pipeline.
+
+### Quick start: core CREST benchmark
 
 The coordinator `experiments/run.py` schedules all eight primary datasets across available GPUs:
 
@@ -82,7 +84,7 @@ Each dataset prints its per-split training-only spectral gap, filter polarity, r
 
 ## Results
 
-Unified benchmark test accuracy (%, mean ± std over 10 splits) under the matched 30-trial Optuna protocol. Bold marks the best depth-selection method per row (CREST versus AD-GNN and BEC-GNN).
+Paper Table 2 benchmark test accuracy (%, mean ± std over 10 splits) under the matched 30-trial Optuna protocol. `CREST (Hájek)` is reproduced directly by this repository; competing baselines follow their respective official implementations under the matched protocol described in the manuscript. Bold marks the best depth-selection method per row (CREST versus AD-GNN and BEC-GNN).
 
 | Dataset | $\hat{\lambda}_{\mathrm{sig}}$ | $(h_\phi, K^*)$ | CREST (Hájek) | AD-GNN | BEC-GNN | GCN-Grid | ACM-GCN |
 |---|---|---|---|---|---|---|---|

@@ -22,7 +22,7 @@ from shared.data import load_dataset, MULTI_SPLIT_DATASETS
 from shared.propagation import (compute_lambda_signal, select_aggregation_filter,
                                  compute_depth_from_gap)
 from shared.train import (
-    GCN, GCN_HP, train_gcn, C0,
+    GCN, GCN_HP, train_gcn, C0, _set_seed,
     _PLATONOV_DATASETS, _OGB_DATASETS, _PLANETOID_FIXED_DATASETS, _random_masks,
 )
 
@@ -63,7 +63,8 @@ def _objective(trial: optuna.Trial, dsname: str, data_root: str,
 
     hp_cache = None
     val_accs = []
-    for x, ei, y, tm, vm, te in splits:
+    for split_i, (x, ei, y, tm, vm, te) in enumerate(splits):
+        _set_seed(42 + trial.number * 100 + split_i)
         lam = compute_lambda_signal(ei, y, n, node_mask=tm, estimator="hajek")
         h_phi = select_aggregation_filter(lam)
         lam_eff = (1.0 - lam / 2.0) if h_phi == 'hp' else lam
@@ -113,7 +114,7 @@ def run_hpo_dataset(dsname: str, args) -> dict:
         return _objective(trial, dsname, args.data_root, args.train_ratio, args.val_ratio)
 
     study.optimize(objective, n_trials=args.n_trials,
-                   n_jobs=_hpo_n_jobs(dsname), show_progress_bar=False)
+                   n_jobs=1, show_progress_bar=False)
 
     best = study.best_trial
     entry = {

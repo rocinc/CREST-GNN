@@ -5,6 +5,14 @@ from typing import Optional, Tuple
 
 import torch
 from torch_geometric.data import Data
+from torch_geometric.utils import remove_self_loops, to_undirected
+
+
+def _canonicalize_graph(edge_index: torch.Tensor, n_nodes: int) -> torch.Tensor:
+    """Return canonical undirected edge_index without self-loops or duplicates."""
+    ei, _ = remove_self_loops(edge_index)
+    ei = to_undirected(ei, num_nodes=n_nodes)
+    return ei.contiguous()
 
 
 _DATASET_REGISTRY = {
@@ -58,7 +66,7 @@ def load_dataset(
     data = _load_pyg(cls_name, str(root), kwargs, split_idx)
 
     x = data.x
-    edge_index = data.edge_index
+    edge_index = _canonicalize_graph(data.edge_index, x.size(0))
     y = data.y
 
     if y.dim() == 2:
@@ -93,7 +101,7 @@ def _load_platonov_npz(
     y = torch.from_numpy(d["node_labels"]).long()
 
     edges = torch.from_numpy(d["edges"]).long().t().contiguous()
-    edge_index = torch.cat([edges, edges.flip(0)], dim=1)
+    edge_index = _canonicalize_graph(edges, x.size(0))
 
     n_splits = d["train_masks"].shape[0]
     idx = split_idx % n_splits
@@ -212,7 +220,7 @@ def load_dataset_all_splits(
         x = torch.from_numpy(d["node_features"]).float()
         y = torch.from_numpy(d["node_labels"]).long()
         edges = torch.from_numpy(d["edges"]).long().t().contiguous()
-        edge_index = torch.cat([edges, edges.flip(0)], dim=1)
+        edge_index = _canonicalize_graph(edges, x.size(0))
         n_splits = d["train_masks"].shape[0]
         return [
             (x, edge_index, y,
@@ -224,7 +232,7 @@ def load_dataset_all_splits(
 
     data = _load_pyg(cls_name, str(root), kwargs, split_idx=0)
     x = data.x
-    edge_index = data.edge_index
+    edge_index = _canonicalize_graph(data.edge_index, x.size(0))
     y = data.y.squeeze(1) if data.y.dim() == 2 else data.y
     assert x.dtype in (torch.float, torch.float32)
     assert y.dtype == torch.long
@@ -244,7 +252,7 @@ def load_dataset_all_splits(
 
 
 MULTI_SPLIT_DATASETS = {
-    "texas", "cornell", "wisconsin",
+    "texas", "cornell", "wisconsin", "film",
     "squirrel-filtered",
 }
 

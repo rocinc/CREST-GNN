@@ -3,6 +3,7 @@ import argparse
 import json
 import math
 import os
+import random
 import sys
 import time
 
@@ -15,8 +16,9 @@ import torch.nn.functional as F
 from torch_geometric.nn import GCNConv
 
 _this_dir = os.path.dirname(os.path.abspath(__file__))
-if _this_dir not in sys.path:
-    sys.path.insert(0, _this_dir)
+_repo_root = os.path.dirname(_this_dir)
+if _repo_root not in sys.path:
+    sys.path.insert(0, _repo_root)
 
 from shared.data import load_dataset, load_dataset_all_splits, MULTI_SPLIT_DATASETS
 from shared.propagation import (
@@ -122,6 +124,14 @@ class GCN_HP(nn.Module):
         return h
 
 
+def _set_seed(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
 def train_gcn(model: nn.Module, x: torch.Tensor, edge_index: torch.Tensor,
               y: torch.Tensor, train_mask: torch.Tensor, val_mask: torch.Tensor,
               epochs: int, lr: float, wd: float) -> float:
@@ -161,12 +171,9 @@ def run_dataset(dsname: str, args, hpo_params: dict) -> dict:
         with open(result_path) as f:
             return json.load(f)
 
-    params = dict(DEFAULT_PARAMS)
-    if dsname in hpo_params:
-        params.update(hpo_params[dsname].get("best_params", {}))
-        print(f"  Using HPO params: {params}", flush=True)
-    else:
-        print(f"  Using defaults: {params}", flush=True)
+    assert dsname in hpo_params, f"Missing HPO params for dataset '{dsname}'"
+    params = dict(hpo_params[dsname]["best_params"])
+    print(f"  Using HPO params: {params}", flush=True)
 
     x0, ei0, y0, tm0, vm0, te0 = load_dataset(dsname, args.data_root, split_idx=0)
     n = x0.size(0)
@@ -212,6 +219,7 @@ def run_dataset(dsname: str, args, hpo_params: dict) -> dict:
 
     def _run_split(i_s):
         i, (x, ei, y, tm, vm, te) = i_s
+        _set_seed(1000 + i)
         lam_s, h_phi_s, k_star_s = split_prescriptions[i]
         if h_phi_s == 'hp':
             model = GCN_HP(in_dim, hidden, n_classes, k_star_s, dropout=dropout).to(device)
@@ -226,20 +234,9 @@ def run_dataset(dsname: str, args, hpo_params: dict) -> dict:
         print(f"  split {i+1}/{len(splits)} lam={lam_s:.3f} filter={h_phi_s} K*={k_star_s} val={val_acc:.4f} test={test_acc:.4f}", flush=True)
         return i, {"val_acc": val_acc, "test_acc": test_acc, "lambda_signal": lam_s, "h_phi": h_phi_s, "k_star": k_star_s}
 
-    from concurrent.futures import ThreadPoolExecutor
-    _HUGE  = set()
-    _LARGE = {"roman-empire", "cs", "pubmed", "dblp"}
-    if dsname.lower() in _HUGE:
-        n_parallel = 1
-    elif dsname.lower() in _LARGE:
-        n_parallel = 2
-    else:
-        n_parallel = min(len(splits_gpu), 4)
-
     split_results = [None] * len(splits_gpu)
-    with ThreadPoolExecutor(max_workers=n_parallel) as pool:
-        for i, r in pool.map(_run_split, enumerate(splits_gpu)):
-            split_results[i] = r
+    for i, r in map(_run_split, enumerate(splits_gpu)):
+        split_results[i] = r
 
     test_accs = [r["test_acc"] for r in split_results]
     lam_vals = [r["lambda_signal"] for r in split_results]
@@ -278,15 +275,13 @@ def main():
     parser.add_argument("--force",       action="store_true")
     args = parser.parse_args()
 
+    assert os.path.exists(args.hpo_params), f"HPO params file not found: {args.hpo_params}"
     hpo_params = {}
-    if os.path.exists(args.hpo_params):
-        with open(args.hpo_params) as f:
-            for entry in json.load(f):
-                if "dataset" in entry and "error" not in entry:
-                    hpo_params[entry["dataset"]] = entry
-        print(f"Loaded HPO params for {len(hpo_params)} datasets", flush=True)
-    else:
-        print(f"WARNING: {args.hpo_params} not found — using defaults", flush=True)
+    with open(args.hpo_params) as f:
+        for entry in json.load(f):
+            if "dataset" in entry and "error" not in entry:
+                hpo_params[entry["dataset"]] = entry
+    print(f"Loaded HPO params for {len(hpo_params)} datasets", flush=True)
 
     datasets = args.datasets or [
         "cora_ml", "citeseer", "pubmed", "dblp", "photo", "cs",

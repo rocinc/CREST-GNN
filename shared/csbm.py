@@ -32,10 +32,7 @@ def generate_csbm(
                 edges_src += [i, j]
                 edges_dst += [j, i]
 
-    if len(edges_src) == 0:
-        for i in range(min(n - 1, 5)):
-            edges_src += [i, i + 1]
-            edges_dst += [i + 1, i]
+    assert len(edges_src) > 0, "CSBM draw produced an empty graph"
 
     edge_index = torch.tensor([edges_src, edges_dst], dtype=torch.long)
 
