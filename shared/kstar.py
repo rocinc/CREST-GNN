@@ -83,9 +83,15 @@ def compute_all_kstar(
     probe_max_iter: int = -1,
     restrict_lambda_to_train: bool = True,
     h_phi: Optional[str] = None,
+    include_oracle_trfw: bool = False,
 ) -> dict:
-    """Compute K* (theory), empirical K*, and supporting quantities for the chosen filter."""
-    from .fisher import compute_trfw_curve, compute_softmax_fisher_trace
+    """Compute training-only K* (theory), empirical K*, and optional full-label oracle Tr(F W) diagnostics.
+
+    When restrict_lambda_to_train=True (default), lambda_signal, h_phi, and k_star_theory use only
+    train_mask labels. Set include_oracle_trfw=True explicitly to compute full-label oracle
+    Tr(F_v W_v) diagnostics (k_star_ig_oracle, e_signal_oracle, trfw_mean_curve_oracle).
+    """
+    from .fisher import compute_trfw_curve
 
     n_nodes = h_list[0].size(0)
     node_mask_for_lambda = train_mask if restrict_lambda_to_train else None
@@ -99,41 +105,29 @@ def compute_all_kstar(
         edge_index, y, n_nodes, h_phi, node_mask=node_mask_for_lambda
     )
 
-    trfw_mean_curve, _ = compute_trfw_curve(
-        h_list, edge_index, y, train_mask, n_nodes, probe_max_iter, h_phi=h_phi
-    )
-
-    trf_mean_curve = []
-    for h in h_list:
-        W_head, b_head = train_linear_probe(h, y, train_mask, max_iter=probe_max_iter)
-        trf_k = compute_softmax_fisher_trace(h, W_head, b_head)
-        trf_mean_curve.append(trf_k)
-
     k_star_emp, val_acc_curve = compute_kstar_emp(
         h_list, y, train_mask, val_mask, probe_max_iter
     )
 
-    k_star_ig, e_signal_peak = compute_kstar_ig_peak(
-        trfw_mean_curve, C0,
-        trf_mean_curve=trf_mean_curve,
-        h_list=h_list,
-        y=y,
-        train_mask=train_mask,
-    )
+    assert 0.0 < lambda_signal_t < 1.0
+    k_star_theory = compute_kstar_theory(1.0, lambda_signal_t, C0)
 
-    if e_signal_peak > 0 and lambda_signal_t > 0:
-        k_star_theory = compute_kstar_theory(e_signal_peak, lambda_signal_t, C0)
-    else:
-        k_star_theory = float("nan")
-
-    return {
-        "k_star_ig": k_star_ig,
+    out = {
         "k_star_emp": k_star_emp,
         "k_star_theory": k_star_theory,
-        "e_signal": e_signal_peak,
         "lambda_signal": lambda_signal_t,
         "lambda_signal_lp": lambda_signal_lp,
         "h_phi": h_phi,
-        "trfw_mean_curve": trfw_mean_curve,
         "val_acc_curve": val_acc_curve,
     }
+
+    if include_oracle_trfw:
+        trfw_mean_curve, _ = compute_trfw_curve(
+            h_list, edge_index, y, train_mask, n_nodes, probe_max_iter, h_phi=h_phi
+        )
+        k_star_ig, e_signal_peak = compute_kstar_ig_peak(trfw_mean_curve, C0)
+        out["k_star_ig_oracle"] = k_star_ig
+        out["e_signal_oracle"] = e_signal_peak
+        out["trfw_mean_curve_oracle"] = trfw_mean_curve
+
+    return out

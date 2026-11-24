@@ -34,9 +34,6 @@ def train_linear_probe(
     optimizer.step(closure)
     W_head = W.detach().cpu().numpy().astype(np.float32)
     b_head = b.detach().cpu().numpy().astype(np.float32)
-    if n_classes == 2:
-        W_head = np.vstack([-W_head[1:2] / 2.0, W_head[1:2] / 2.0])
-        b_head = np.concatenate([-b_head[1:2] / 2.0, b_head[1:2] / 2.0])
     return W_head, b_head
 
 
@@ -62,8 +59,7 @@ def compute_homophily_per_node(
     y: torch.Tensor,
     n_nodes: int,
 ) -> torch.Tensor:
-    """Per-node 1-hop label homophily gamma_v = |same-class neighbors| / |neighbors|."""
-    from torch_scatter import scatter
+    """Oracle full-label per-node 1-hop homophily gamma_v = |same-class neighbors| / |neighbors|."""
     device = y.device
     row, col = edge_index[0].to(device), edge_index[1].to(device)
     same_class = (y[row] == y[col]).float()

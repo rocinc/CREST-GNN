@@ -33,9 +33,9 @@ DEVICE       = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def _suggest_params(trial: optuna.Trial) -> dict:
     return {
-        "hidden":  trial.suggest_categorical("hidden",  [64, 128, 256, 512]),
-        "lr":      trial.suggest_float("lr",      1e-4, 5e-2, log=True),
-        "dropout": trial.suggest_float("dropout", 0.0,  0.7),
+        "hidden":  trial.suggest_categorical("hidden",  [64, 128, 256]),
+        "lr":      trial.suggest_float("lr",      5e-4, 5e-2, log=True),
+        "dropout": trial.suggest_float("dropout", 0.1,  0.7),
         "wd":      trial.suggest_float("wd",      1e-6, 1e-2, log=True),
     }
 

@@ -26,7 +26,7 @@ pip install torch-geometric==2.7.0
 pip install -r requirements.txt
 ```
 
-`requirements.txt` lists the non-CUDA packages. For CPU-only installs, replace Step 1 with the CPU wheel and skip Step 2.
+`requirements.txt` lists the non-CUDA packages. For CPU-only installs, replace `cu124` with `cpu` in both Step 1 (`https://download.pytorch.org/whl/cpu`) and Step 2 (`https://data.pyg.org/whl/torch-2.5.1+cpu.html`); `torch-scatter` is required by `GCN_HP` and `propagate_once`.
 
 ---
 
